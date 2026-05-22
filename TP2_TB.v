@@ -1,56 +1,168 @@
 `timescale 1ns / 1ps
-
 module cpu_tb;
+
+    // ---- Clock e Reset ----
     reg clk, reset;
-    wire [31:0] pc, instr, r1, r2, imm, alu_res, m_data;
-    wire [3:0] a_ctrl;
-    wire [1:0] a_op;
-    wire rw, mr, mw, as, m2r, br, z;
 
-    reg [31:0] pc_reg;
-    assign pc = pc_reg;
+    // ---- Fios do PC ----
+    wire [31:0] current_pc, next_pc, pc_plus4_out, pc_branch_out;
 
-    // Lógica do PC
-    always @(posedge clk or posedge reset) begin
-        if (reset) pc_reg <= 0;
-        else pc_reg <= (br && z) ? pc_reg + imm : pc_reg + 4;
-    end
+    // ---- Fios da Instrução ----
+    wire [31:0] instruction;
 
-    // Instanciação dos Componentes
-    instr_mem imem (.addr(pc), .instruction(instr));
-    control   ctrl (.opcode(instr[6:0]), .reg_write(rw), .mem_read(mr), .mem_write(mw), .alu_src(as), .mem_to_reg(m2r), .branch(br), .alu_op(a_op));
-    reg_file  rf   (.clk(clk), .reg_write(rw), .rs1(instr[19:15]), .rs2(instr[24:20]), .rd(instr[11:7]), .write_data(m2r ? m_data : alu_res), .read_data1(r1), .read_data2(r2));
-    imm_gen   igen (.instruction(instr), .imm_ext(imm));
-    
-    // Unidade ALU simplificada para o TB
-    assign alu_res = as ? r1 + imm : r1 + r2;
-    assign z = (alu_res == 0);
+    // ---- Fios de Controle ----
+    wire reg_write, mem_read, mem_write, alu_src, mem_to_reg, branch;
+    wire [1:0] alu_op;
 
-    // Clock
+    // ---- Fios do Banco de Registradores ----
+    wire [31:0] read_data1, read_data2, write_data;
+
+    // ---- Fios do Imediato ----
+    wire [31:0] imm_ext;
+
+    // ---- Fios da ALU ----
+    wire [3:0]  alu_ctrl;
+    wire [31:0] alu_b, alu_result;
+    wire        zero;
+
+    // ---- Fios da Memória de Dados ----
+    wire [31:0] mem_read_data;
+
+    // ---- Fios do Branch ----
+    wire pcsrc;
+
+    // =====================================================================================================
+    // Program Counter
+    // =====================================================================================================
+    pc PC (
+        .clk(clk),
+        .reset(reset),
+        .next_pc(next_pc),
+        .current_pc(current_pc)
+    );
+
+    // =====================================================================================================
+    // Busca da Instrução
+    // =====================================================================================================
+    instr_mem INSTR_MEM (
+        .addr(current_pc),
+        .instruction(instruction)
+    );
+
+    // =====================================================================================================
+    // Decodificação
+    // =====================================================================================================
+    control CONTROL (
+        .opcode(instruction[6:0]),
+        .reg_write(reg_write),
+        .mem_read(mem_read),
+        .mem_write(mem_write),
+        .alu_src(alu_src),
+        .mem_to_reg(mem_to_reg),
+        .branch(branch),
+        .alu_op(alu_op)
+    );
+
+    reg_file REG_FILE (
+        .clk(clk),
+        .reg_write(reg_write),
+        .rs1(instruction[19:15]),
+        .rs2(instruction[24:20]),
+        .rd(instruction[11:7]),
+        .write_data(write_data),
+        .read_data1(read_data1),
+        .read_data2(read_data2)
+    );
+
+    imm_gen IMM_GEN (
+        .instruction(instruction),
+        .imm_ext(imm_ext)
+    );
+
+    // =====================================================================================================
+    // Execução
+    // =====================================================================================================
+    alu_control ALU_CONTROL (
+        .alu_op(alu_op),
+        .funct3(instruction[14:12]),
+        .funct7(instruction[31:25]),
+        .alu_ctrl(alu_ctrl)
+    );
+
+    mux_alu_src MUX_ALU_SRC (
+        .read_data2(read_data2),
+        .imm_ext(imm_ext),
+        .alu_src(alu_src),
+        .b(alu_b)
+    );
+
+    alu ALU (
+        .a(read_data1),
+        .b(alu_b),
+        .alu_ctrl(alu_ctrl),
+        .result(alu_result),
+        .zero(zero)
+    );
+
+    // =====================================================================================================
+    // Memória de Dados
+    // =====================================================================================================
+    data_mem DATA_MEM (
+        .clk(clk),
+        .mem_read(mem_read),
+        .mem_write(mem_write),
+        .addr(alu_result),
+        .write_data(read_data2),
+        .read_data(mem_read_data)
+    );
+
+    mux_mem_to_reg MUX_MEM_TO_REG (
+        .alu_result(alu_result),
+        .mem_read_data(mem_read_data),
+        .mem_to_reg(mem_to_reg),
+        .write_data(write_data)
+    );
+
+    // =====================================================================================================
+    // Próximo PC
+    // =====================================================================================================
+    pc_plus4 PC_PLUS4 (
+        .current_pc(current_pc),
+        .pc_plus4(pc_plus4_out)
+    );
+
+    pc_branch PC_BRANCH (
+        .current_pc(current_pc),
+        .imm_ext(imm_ext),
+        .pc_branch(pc_branch_out)
+    );
+
+    branch_ctrl BRANCH_CTRL (
+        .branch(branch),
+        .zero(zero),
+        .pcsrc(pcsrc)
+    );
+
+    mux_pcsrc MUX_PCSRC (
+        .pc_plus4(pc_plus4_out),
+        .pc_branch(pc_branch_out),
+        .pcsrc(pcsrc),
+        .next_pc(next_pc)
+    );
+
+    // =====================================================================================================
+    // Clock e Simulação
+    // =====================================================================================================
     initial clk = 0;
     always #5 clk = ~clk;
 
-    // Simulação
     initial begin
         reset = 1; #15 reset = 0;
-        
-        $display("Iniciando Simulação...");
-        // Tempo suficiente para processar o ficheiro binário
-        #200; 
-
-        show_final_state;
+        #200;
+        $display("=== Estado Final dos Registradores ===");
+        for (integer i = 0; i < 32; i = i + 1)
+            $display("Register [%2d]: %15d", i, REG_FILE.regs[i]);
         $finish;
     end
-
-    // --- TASK DE IMPRESSÃO (IGUAL À IMAGEM) ---
-    task show_final_state;
-        integer i;
-        begin
-            for (i = 0; i < 32; i = i + 1) begin
-                // Formatação: Register [ i]: valor
-                $display("Register [%2d]: %15d", i, rf.regs[i]);
-            end
-        end
-    endtask
 
 endmodule
