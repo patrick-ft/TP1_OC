@@ -48,13 +48,25 @@ module reg_file (
     output [31:0] read_data2
 );
     reg [31:0] regs [0:31];
-    integer i;
+    integer i, file, status;
+
     initial begin
-        for (i = 0; i < 32; i = i + 1)
-            regs[i] = 0;
+        for (i = 0; i < 32; i = i + 1) regs[i] = 0;
+
+        file = $fopen("valores.txt", "r");
+        if (file != 0) begin
+            for (i = 1; i < 32; i = i + 1) begin
+                if (!$feof(file)) begin
+                    status = $fscanf(file, "%d\n", regs[i]);
+                end
+            end
+            $fclose(file);
+        end
     end
+
     assign read_data1 = (rs1 == 0) ? 32'b0 : regs[rs1];
     assign read_data2 = (rs2 == 0) ? 32'b0 : regs[rs2];
+
     always @(posedge clk) begin
         if (reg_write && rd != 0)
             regs[rd] <= write_data;
@@ -239,7 +251,7 @@ module pc_plus4 (
     assign pc_plus4 = current_pc + 4;
 endmodule
 
-// =====================================================================================================
+// =====================================================================================================AV
 // PC Branch - calcula o endereço de desvio PC + imm_ext
 // =====================================================================================================
 module pc_branch (
